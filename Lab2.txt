@@ -1,0 +1,179 @@
+TASK 1 – Démarrage de Kafka
+
+Commandes:
+docker-compose up -d
+docker ps
+
+Résultat:
+CONTAINER ID   IMAGE                             PORTS                    NAMES
+1784ccb47a61   confluentinc/cp-kafka:7.5.0       0.0.0.0:9092->9092/tcp   hands-on-kafka-kafka-1
+71012df5f501   confluentinc/cp-zookeeper:7.5.0   0.0.0.0:2181->2181/tcp   hands-on-kafka-zookeeper-1
+
+---
+
+TASK 2 – Topics
+
+Commandes:
+docker exec -it hands-on-kafka-kafka-1 bash
+kafka-topics --create --topic transactions --bootstrap-server localhost:9092
+kafka-topics --describe --topic transactions --bootstrap-server localhost:9092
+
+Résultat:
+Topic: transactions     PartitionCount: 1       ReplicationFactor: 1
+        Topic: transactions     Partition: 0    Leader: 1       Replicas: 1     Isr: 1
+
+---
+
+TASK 3 – Producers
+
+Commande:
+kafka-console-producer --topic transactions --bootstrap-server localhost:9092
+
+Messages envoyés:
+{"id": 1, "amount": 100, "user": "alice"}
+{"id": 2, "amount": 250, "user": "bob"}
+{"id": 3, "amount": 75, "user": "charlie"}
+helloooooooooooooooo
+
+---
+
+TASK 4 – Consumers
+
+Commandes:
+kafka-console-consumer --topic transactions --bootstrap-server localhost:9092
+kafka-console-consumer --topic transactions --bootstrap-server localhost:9092 --from-beginning
+
+Résultat:
+Sans --from-beginning: reçoit 4 nouveaux messages en temps réel
+Avec --from-beginning: affiche tous les 7 messages stockés
+
+---
+
+TASK 5 – Offsets
+
+Commandes:
+kafka-console-consumer --topic transactions --bootstrap-server localhost:9092 --group my-consumer-group --from-beginning
+kafka-console-consumer --topic transactions --bootstrap-server localhost:9092 --group my-consumer-group
+kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group my-consumer-group
+
+Résultat:
+GROUP              TOPIC          PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+my-consumer-group  transactions   0          7               7               0
+
+---
+
+TASK 6 – Consumer Groups
+
+Avant de commencer ce task, j'ai modifié le topic pour augmenter le nombre de partitions de 1 à 2, car avec une seule partition on ne peut avoir qu'un seul consumer actif.
+
+Modification du nombre de partitions:
+kafka-topics --alter --topic transactions --partitions 2 --bootstrap-server localhost:9092
+kafka-topics --describe --topic transactions --bootstrap-server localhost:9092
+
+Résultat:
+Topic: transactions     PartitionCount: 2       ReplicationFactor: 1
+        Partition: 0    Leader: 1       Replicas: 1     Isr: 1
+        Partition: 1    Leader: 1       Replicas: 1     Isr: 1
+
+Démarrage de deux consumers dans le même groupe:
+
+Terminal 1:
+docker exec -d hands-on-kafka-kafka-1 kafka-console-consumer --topic transactions --bootstrap-server localhost:9092 --group dual-consumer-group
+
+Terminal 2:
+docker exec -d hands-on-kafka-kafka-1 kafka-console-consumer --topic transactions --bootstrap-server localhost:9092 --group dual-consumer-group
+
+Vérification des consumers actifs:
+kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group dual-consumer-group --members
+
+Résultat:
+GROUP               CONSUMER-ID                                           #PARTITIONS
+dual-consumer-group console-consumer-1ee821f6-c909-4c4b-ac62-7bd4a212bc14 1
+dual-consumer-group console-consumer-061708b8-3e7a-43eb-9ff7-887b0a71c9ce 1
+
+Assignation détaillée des partitions:
+kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group dual-consumer-group
+
+Résultat:
+GROUP               TOPIC          PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID
+dual-consumer-group transactions   1          0               0               0    console-consumer-1ee821f6...
+dual-consumer-group transactions   0          0               0               0    console-consumer-061708b8...
+
+Production de messages:
+
+Premier batch (sans clés):
+docker exec -i hands-on-kafka-kafka-1 kafka-console-producer --topic transactions --bootstrap-server localhost:9092
+
+{"id": 101, "amount": 500, "user": "david"}
+{"id": 102, "amount": 300, "user": "emma"}
+{"id": 103, "amount": 150, "user": "frank"}
+{"id": 104, "amount": 200, "user": "grace"}
+{"id": 105, "amount": 450, "user": "henry"}
+{"id": 106, "amount": 350, "user": "iris"}
+{"id": 107, "amount": 600, "user": "jack"}
+{"id": 108, "amount": 125, "user": "kate"}
+
+Deuxième batch (avec clés pour contrôler la distribution):
+docker exec -i hands-on-kafka-kafka-1 kafka-console-producer --topic transactions --bootstrap-server localhost:9092 --property "parse.key=true" --property "key.separator=:"
+
+user1:{"id": 201, "amount": 100, "user": "alice"}
+user2:{"id": 202, "amount": 200, "user": "bob"}
+user3:{"id": 203, "amount": 300, "user": "charlie"}
+user4:{"id": 204, "amount": 400, "user": "diana"}
+user5:{"id": 205, "amount": 500, "user": "evan"}
+user6:{"id": 206, "amount": 600, "user": "fiona"}
+
+Vérification de la distribution finale:
+kafka-consumer-groups --bootstrap-server localhost:9092 --describe --group dual-consumer-group
+
+Résultat:
+GROUP               TOPIC          PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID
+dual-consumer-group transactions   1          11              11              0    console-consumer-1ee821f6...
+dual-consumer-group transactions   0          3               3               0    console-consumer-061708b8...
+
+---
+
+Questions de réflexion
+
+1. Pourquoi les topics sont considérés comme des flux logiques?
+
+Les topics sont des flux logiques parce qu'ils représentent un flux continu de données organisé par catégorie ou objectif, indépendamment du stockage physique. Un topic comme "transactions" regroupe tous les messages liés, créant une abstraction logique que les applications peuvent lire et écrire sans se soucier des détails de stockage (partitions, répliques, emplacements sur disque).
+
+2. Pourquoi Kafka utilise des partitions?
+
+Kafka utilise les partitions pour plusieurs raisons:
+- Parallélisme: plusieurs consumers peuvent lire différentes partitions simultanément
+- Ordre: les messages dans une partition gardent un ordre strict
+- Tolérance aux pannes: les partitions peuvent être répliquées sur plusieurs brokers
+- Scalabilité: un topic peut grandir au-delà de la capacité d'un seul serveur
+
+Sans partitions, Kafka ne pourrait traiter les messages que séquentiellement sur une machine, créant un goulot d'étranglement.
+
+3. Quel est le rôle des offsets?
+
+Les offsets sont des IDs séquentiels assignés à chaque message dans une partition. Ils permettent de:
+- Suivre la position des messages (comme des numéros de page)
+- Permettre aux consumers de se rappeler où ils se sont arrêtés
+- Rejouer les messages depuis n'importe quel point
+- Fournir de la tolérance aux pannes (un consumer peut reprendre depuis le dernier offset)
+- Permettre à différents consumer groups de suivre leur progression indépendamment
+
+Les offsets garantissent que les messages sont consommés de manière fiable sans perte ni duplication.
+
+4. Pourquoi chaque partition n'autorise qu'un seul consumer par groupe?
+
+Cette contrainte empêche le traitement dupliqué et maintient l'ordre des messages:
+- Si deux consumers lisaient la même partition, ils pourraient traiter le même message deux fois
+- L'ordre dans la partition deviendrait ambigu
+- La gestion des offsets serait complexe
+
+Par contre, différents consumer groups PEUVENT lire la même partition indépendamment, permettant à plusieurs applications de traiter le même flux de données.
+
+5. Que se passe-t-il s'il y a plus de consumers que de partitions?
+
+Les consumers supplémentaires restent inactifs (idle):
+- Si le topic a 1 partition et que 3 consumers rejoignent le même groupe, seulement 1 consumer reçoit des messages
+- Les 2 autres restent connectés mais ne traitent aucune donnée
+- Ils servent de backup (si le consumer actif tombe, Kafka réassigne la partition à un consumer inactif)
+
+C'est pourquoi choisir le bon nombre de partitions est important pour scaler le débit de consommation.
